@@ -15,14 +15,21 @@ def utcnow() -> datetime:
 
 
 async def lock_accounts(session: AsyncSession, *account_ids: str) -> dict[str, Account]:
-    """SELECT ... FOR UPDATE in a stable (sorted) order so that two concurrent
-    transfers A->B and B->A cannot deadlock."""
+    """Row-lock accounts in a stable (sorted) order so that two concurrent
+    transfers A->B and B->A cannot deadlock.
+
+    FOR NO KEY UPDATE rather than FOR UPDATE: inserts into tables with a FK to
+    accounts (idempotency_keys, transfers, ledger_entries) take FOR KEY SHARE on the
+    account row. FOR UPDATE conflicts with KEY SHARE, so two requests of the same
+    user that had both inserted their idempotency key would deadlock each other.
+    NO KEY UPDATE is exactly what a balance UPDATE needs and does not conflict.
+    """
     ids = sorted(set(account_ids))
     rows = await session.scalars(
         select(Account)
         .where(Account.id.in_(ids))
         .order_by(Account.id)
-        .with_for_update()
+        .with_for_update(key_share=True)  # renders FOR NO KEY UPDATE
         .execution_options(populate_existing=True)
     )
     return {a.id: a for a in rows}
