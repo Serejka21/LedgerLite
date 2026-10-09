@@ -1,0 +1,58 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-wallet}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-wallet-dev-password}
+      POSTGRES_DB: ${POSTGRES_DB:-wallet}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  provider-mock:
+    build: ./provider_mock
+    environment:
+      PROVIDER_API_KEY: ${PROVIDER_API_KEY:-dev-provider-key}
+      PROVIDER_WEBHOOK_SECRET: ${PROVIDER_WEBHOOK_SECRET:-dev-webhook-secret}
+      PROVIDER_PUBLIC_URL: http://localhost:${PROVIDER_PORT:-8001}
+    ports:
+      - "${PROVIDER_PORT:-8001}:8001"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  wallet:
+    build: ./wallet_service
+    depends_on:
+      db:
+        condition: service_healthy
+      provider-mock:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-wallet}:${POSTGRES_PASSWORD:-wallet-dev-password}@db:5432/${POSTGRES_DB:-wallet}
+      PROVIDER_BASE_URL: http://provider-mock:8001
+      PROVIDER_API_KEY: ${PROVIDER_API_KEY:-dev-provider-key}
+      PROVIDER_WEBHOOK_SECRET: ${PROVIDER_WEBHOOK_SECRET:-dev-webhook-secret}
+      # the address provider-mock uses for callbacks (inside the compose network)
+      WALLET_PUBLIC_URL: http://wallet:8000
+      PROVIDER_CONNECT_TIMEOUT_SECONDS: ${PROVIDER_CONNECT_TIMEOUT_SECONDS:-2}
+      PROVIDER_READ_TIMEOUT_SECONDS: ${PROVIDER_READ_TIMEOUT_SECONDS:-5}
+      WEBHOOK_TOLERANCE_SECONDS: ${WEBHOOK_TOLERANCE_SECONDS:-300}
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-30}
+    ports:
+      - "${WALLET_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  pgdata:
